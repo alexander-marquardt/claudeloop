@@ -1,6 +1,6 @@
 [tier]
 name = "super-exhaustive"
-description = "Everything in exhaustive plus infrastructure audits (check-config, dead-code, observability, schema-validation, secret-leakage, feature-flags, fixture-drift), a recurring-issues audit that mines GitHub issue/PR history for repeated defect classes, and a final meta-review that writes recommendations for checks to consider next. Meant for occasional deep audits, not every run. Note: migration-safety is available as an on-demand check (--checks migration-safety) for projects with SQL/relational migrations, but is not included in any default plan."
+description = "Everything in exhaustive plus infrastructure audits (check-config, dead-code, observability, schema-validation, secret-leakage, feature-flags, fixture-drift), a recurring-issues audit that mines GitHub issue/PR history for repeated defect classes, and a final meta-review that writes recommendations for checks to consider next. Meant for occasional deep audits, not every run. Note: migration-safety is available as an on-demand check (--checks migration-safety) for projects that change persisted schema — SQL/relational migrations or document/search-index stores (Elasticsearch, MongoDB) — but is not included in any default plan."
 
 [[checks]]
 id = "test-fix"
@@ -58,6 +58,12 @@ effort = "medium"
 
 [[checks]]
 id = "security"
+model = "opus"
+idle_timeout = 900
+effort = "xhigh"
+
+[[checks]]
+id = "access-control"
 model = "opus"
 idle_timeout = 900
 effort = "xhigh"
@@ -153,6 +159,12 @@ idle_timeout = 900
 effort = "high"
 
 [[checks]]
+id = "state-locality"
+model = "opus"
+idle_timeout = 900
+effort = "high"
+
+[[checks]]
 id = "feature-flags"
 model = "sonnet"
 idle_timeout = 600
@@ -163,6 +175,12 @@ id = "accessibility"
 model = "sonnet"
 idle_timeout = 600
 effort = "medium"
+
+[[checks]]
+id = "frontend-data-flow"
+model = "opus"
+idle_timeout = 900
+effort = "high"
 
 [[checks]]
 id = "api-design"
@@ -192,6 +210,12 @@ effort = "xhigh"
 id = "tests-for-diff"
 model = "sonnet"
 idle_timeout = 900
+effort = "medium"
+
+[[checks]]
+id = "suppressed-failures"
+model = "sonnet"
+idle_timeout = 600
 effort = "medium"
 
 [[checks]]

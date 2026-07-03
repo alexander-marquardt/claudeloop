@@ -37,7 +37,7 @@ uv run checkloop --dir ~/my-project --review-branch feature/my-work
 # Thorough plan on the review branch
 uv run checkloop --dir ~/my-project --review-branch main --plan thorough
 
-# Exhaustive — all 27 checks, repeat twice
+# Exhaustive — all 31 checks, repeat twice
 uv run checkloop --dir ~/my-project --review-branch main --plan exhaustive --cycles 2
 
 # Super-exhaustive — exhaustive plus infrastructure audits and a meta-review
@@ -120,11 +120,11 @@ Execution plans are TOML files that define which checks to run and which model t
 | Plan | Checks | Description |
 |------|--------|-------------|
 | **basic** (default) | 5 checks | Core code quality — readability, DRY, tests (plus test-fix/test-validate bookends) |
-| **thorough** | 17 checks | Adds docs, docs-accuracy, security, performance, error handling, type safety, derived-value consistency, architecture layer separation, idiomatic implementation, cross-check coherence, a post-modification `tests-for-diff` pass, and a final `commit-audit` advisory |
-| **exhaustive** | 27 checks | Everything in thorough — includes edge cases, complexity, idiomatic implementation, deps, logging, concurrency, concurrency test coverage, a11y, API design, rationale capture, and code cleanup |
-| **super-exhaustive** | 37 checks | Exhaustive plus infrastructure audits (check-config, dead-code, observability, schema-validation, secret-leakage, feature-flags, fixture-drift), a **contributing-conformance** audit (checks this run's diff against the target project's own `CONTRIBUTING.md`/`CLAUDE.md` rules), a **recurring-issues** audit (mines GitHub issue/PR history for repeated defect classes), and a final **meta-review** that writes a recommendations report. Meant for occasional deep audits. |
+| **thorough** | 19 checks | Adds docs, docs-accuracy, security, authorization/access-control, performance, error handling, type safety, derived-value consistency, architecture layer separation, idiomatic implementation, cross-check coherence, a post-modification `tests-for-diff` pass, a `suppressed-failures` sweep, and a final `commit-audit` advisory |
+| **exhaustive** | 31 checks | Everything in thorough — includes edge cases, complexity, idiomatic implementation, deps, logging, concurrency, concurrency test coverage, state-locality & cache coherence, a11y, frontend data-flow correctness, API design, rationale capture, and code cleanup |
+| **super-exhaustive** | 41 checks | Exhaustive plus infrastructure audits (check-config, dead-code, observability, schema-validation, secret-leakage, feature-flags, fixture-drift), a **contributing-conformance** audit (checks this run's diff against the target project's own `CONTRIBUTING.md`/`CLAUDE.md` rules), a **recurring-issues** audit (mines GitHub issue/PR history for repeated defect classes), and a final **meta-review** that writes a recommendations report. Meant for occasional deep audits. |
 
-> `migration-safety` is shipped as an on-demand check, not included in any default plan. Run it with `--checks migration-safety` for projects that have SQL/relational migrations (Postgres, MySQL, etc.), or add it to your own plan file. It is excluded from the defaults because most projects either have no migrations directory or use schemaless stores (Elasticsearch, document DBs) where the audit doesn't apply.
+> `migration-safety` is shipped as an on-demand check, not included in any default plan. Run it with `--checks migration-safety` for projects that change persisted schema — SQL/relational migrations (Postgres, MySQL, etc.) **or** document/search-index stores (Elasticsearch, OpenSearch, MongoDB) and other on-disk format changes — or add it to your own plan file. It is excluded from the defaults because most runs don't touch a persisted-schema surface at all; when yours does, it audits locking/backfill/rollback for SQL and versioned-index/alias-swap plus old-format upgrade tests for document stores.
 
 Every plan includes the `test-fix` (first) and `test-validate` (last) bookend checks to ensure the test suite is green before and after the review.
 
@@ -134,8 +134,8 @@ Use `--checks` to pick individual checks, or `--all-checks` as a shortcut for `-
 
 Each plan file specifies which Claude model to use for each check. The pre-populated plans assign models based on the cognitive demands of each task:
 
-- **Sonnet** (faster, used for most checks) — pattern-matching tasks like readability, DRY, tests, docs, docs-accuracy, error handling, types, complexity, deps, logging, accessibility, API design, and code cleanup.
-- **Opus** (deeper reasoning, used selectively) — multi-layer analysis tasks like security, concurrency, concurrency test coverage, performance, and edge cases, where subtle issues span multiple code layers. Security checks stay on Opus deliberately — Fable's cyber safety classifiers can decline a security-focused prompt and return an empty result.
+- **Sonnet** (faster, used for most checks) — pattern-matching tasks like readability, DRY, tests, docs, docs-accuracy, error handling, types, complexity, deps, logging, accessibility, API design, `suppressed-failures`, and code cleanup.
+- **Opus** (deeper reasoning, used selectively) — multi-layer analysis tasks like security, access-control (authorization/IDOR/tenant-isolation), concurrency, concurrency test coverage, state-locality & cache coherence, frontend data-flow correctness, performance, and edge cases, where subtle issues span multiple code layers. Security checks stay on Opus deliberately — Fable's cyber safety classifiers can decline a security-focused prompt and return an empty result (the same reason `access-control` stays on Opus, not Fable).
 - **Fable 5** (`claude-fable-5` — deepest reasoning, used for the cross-cutting boundary checks) — the whole-codebase, source-of-truth analyses where layer boundaries are at stake: `architecture-boundaries`, `derived-values`, `coherence`, and the deep advisory passes `meta-review` and `recurring-issues`. These reason about which layer *owns* a value (e.g. a frontend that should consume a backend-computed value rather than re-derive it), where the extra capability most changes the verdict. Fable costs roughly 2.6× Opus per check and runs longer turns (hence the larger idle timeouts on those checks), so it is reserved for this cluster rather than applied across the board.
 
 ### Automatic model fallback
@@ -145,7 +145,7 @@ Fable 5 is not available to every account or region. When a check's configured m
 The `--model` flag overrides the per-check model for all checks (it accepts aliases like `sonnet`/`opus` or full IDs like `claude-fable-5`):
 
 ```bash
-# Use plan defaults (sonnet for most; opus for security/concurrency/perf/edge-cases; fable for the boundary checks)
+# Use plan defaults (sonnet for most; opus for security/access-control/concurrency/state-locality/perf/edge-cases; fable for the boundary checks)
 uv run checkloop --dir ~/my-project --plan thorough
 
 # Force all checks to opus (slower but deeper analysis everywhere)
@@ -160,8 +160,8 @@ uv run checkloop --dir ~/my-project --plan thorough --model sonnet
 Separately from the model, each check can set a **reasoning effort** level (`low`, `medium`, `high`, `xhigh`, `max`) via an `effort` key in the plan file — passed straight through to the `claude` CLI's `--effort` flag. Effort controls how much the model thinks and how many tool calls it makes; it is *not* monotonic (cranking everything to `max` tends to overthink and rarely beats `xhigh` for these task shapes), so the plans tune it per check rather than running everything at the CLI default:
 
 - **`medium`** — the mechanical, pattern-matching checks (readability, DRY, idiomatic, docs, types, deps, logging, etc.). These don't need deep deliberation, so `medium` saves tokens and time at little cost to recall. This is the bulk of every run.
-- **`high`** — the deeper Opus reasoning checks (perf, edge-cases, concurrency-testing, observability) and the `test-fix` bookend.
-- **`xhigh`** — the correctness-critical and source-of-truth checks where extra deliberation earns its keep: `security`, `concurrency`, and the boundary and deep-advisory cluster (`architecture-boundaries`, `derived-values`, `coherence`, `meta-review`, `recurring-issues`).
+- **`high`** — the deeper Opus reasoning checks (perf, edge-cases, concurrency-testing, observability, state-locality, frontend-data-flow) and the `test-fix` bookend.
+- **`xhigh`** — the correctness-critical and source-of-truth checks where extra deliberation earns its keep: `security`, `access-control`, `concurrency`, and the boundary and deep-advisory cluster (`architecture-boundaries`, `derived-values`, `coherence`, `meta-review`, `recurring-issues`).
 
 Checks that set no `effort` use the CLI default. The `--effort <level>` flag overrides every check at once — `--effort medium` for a fast, cheap pass, `--effort xhigh` to push the whole suite deeper:
 
@@ -184,6 +184,7 @@ uv run checkloop --dir ~/my-project --plan thorough --effort medium
 | `docs` | thorough | sonnet | README, config docs. Module-level docstrings for design strategy, class docstrings for intent. Function docstrings only where name+signature don't tell the full story. |
 | `docs-accuracy` | thorough | sonnet | Cross-references CLI help, README examples, error messages, and API docs against actual code. Fixes factual inaccuracies — wrong defaults, renamed flags, stale file paths. Does not add documentation. |
 | `security` | thorough | opus | Injection, hardcoded secrets, input validation. Won't change CORS/retry/auth config without a clear vuln. |
+| `access-control` | thorough | opus | Authorization, not authentication: verifies each object-fetch and state-change checks the caller may act on *this* resource — IDOR/BOLA, tenant isolation, function-level role gaps, client-side-only enforcement, mass-assignment/privilege escalation. Adds a regression test where an authenticated-but-unauthorized caller is rejected. Self-skips projects with no authenticated multi-actor surface. Stays on opus (not fable) for the same refusal reason as `security`. |
 | `perf` | thorough | opus | N+1 queries, O(N²) algorithms, blocking I/O, unnecessary allocations. Selective caching for expensive repeated computations. |
 | `errors` | thorough | sonnet | Centralized error handling for external services. Only where code can meaningfully respond. No wrapping code that can't fail. |
 | `types` | thorough | sonnet | Type annotations, replace `Any`/untyped code, runtime validation at API boundaries (Annotated/Pydantic/Zod). |
@@ -191,6 +192,7 @@ uv run checkloop --dir ~/my-project --plan thorough --effort medium
 | `architecture-boundaries` | thorough | fable | Discovers the project's architectural layers, checks that dependencies flow in one direction, and fixes violations — upward imports, leaking internals, shared state coupling, mixed-layer modules, circular dependencies, and source-of-truth inversion (a higher layer recomputing/synthesizing/overriding a value the lower layer authoritatively produces, even when the import direction is legal). Skips single-layer projects. |
 | `coherence` | thorough | fable | Reviews the codebase as a whole after all other checks and fixes cases where checks worked against each other — conflicting changes, cumulative over-engineering, style drift, redundant layering, broken call chains, and load-bearing deletions made by `cleanup-ai-slop`. |
 | `tests-for-diff` | thorough | sonnet | Runs after the behavior-modifying checks. Diffs this run against the scratch-branch base, identifies every changed unit of behavior, and writes a regression test for any unit that lacks one. The earlier `tests` check audits pre-existing coverage; this one closes the gap that opened during the run. Does not modify source code. |
+| `suppressed-failures` | thorough | sonnet | Sweeps this run's diff for silenced failure signals — skipped/`only`/`xfail` tests, `type: ignore`/`@ts-ignore`/`as any`, `noqa`/`eslint-disable`, swallowed `except: pass`/empty catches, and assertions weakened to force green — and restores the signal (fixing the root cause) or requires a narrow, specifically-justified suppression. Distinguishes legitimate `skipif`/invalid-input-test suppressions. |
 | `commit-audit` | thorough | sonnet | Final advisory pass. Classifies every commit this run produced as behavior+test / bug-fix+regression-test / readability-win / docs-only / behavior-without-test / fix-without-test / net-neutral churn, prints the table to the terminal, and writes `.checkloop-commit-audit.md` with the recommended action per commit. Does not revert or rebase. |
 | `edge-cases` | exhaustive | opus | Off-by-one, null/empty inputs, overflow, Unicode edge cases. |
 | `complexity` | exhaustive | sonnet | Flatten nested conditionals, reduce cyclomatic complexity. |
@@ -199,7 +201,9 @@ uv run checkloop --dir ~/my-project --plan thorough --effort medium
 | `logging` | exhaustive | sonnet | Structured logging at entry points. No debug logging on hot paths. |
 | `concurrency` | exhaustive | opus | Race conditions, missing locks, async/await correctness. |
 | `concurrency-testing` | exhaustive | opus | Flags multi-user projects (web apps, APIs, e-commerce) that lack tests simulating concurrent access to shared state. Writes correctness-under-concurrency tests for critical operations (inventory, balances, reservations). Skips single-user projects. |
+| `state-locality` | exhaustive | opus | Coherence of shared state across workers/replicas/tabs: false persistence (instance-local storage presented as shared config), per-worker caches with no cross-instance invalidation, and caches that store a backend-failure degrade value as fresh instead of keeping last-known-good. Litmus: if two instances could diverge after independent legitimate operations, it's a defect. Skips single-instance/stateless projects. |
 | `accessibility` | exhaustive | sonnet | Semantic HTML, ARIA, keyboard nav, colour contrast (WCAG AA). |
+| `frontend-data-flow` | exhaustive | opus | Data-fetching/effect correctness in component frontends (React et al.): stale/missing effect deps, out-of-order fetch races, missing cleanup (post-unmount updates, leaked subscriptions/timers), response→state→refetch loops, entangled effects, StrictMode double-fire, unhandled loading/error states. Correctness, not style. Skips projects with no client-side effect layer. |
 | `api-design` | exhaustive | sonnet | Consistent naming, HTTP methods, error formats, pagination. |
 | `rationale` | exhaustive | sonnet | Ensures every non-trivial module, function, config knob, complex code block, and invariant-pinning test carries a brief explanation of *why* it exists — placed in a docstring, code comment, or doc file as appropriate. Investigates via `git log`/blame/PR references before writing; leaves `TODO(rationale): …` markers and reports them as gaps when the rationale can't be recovered. Documentation-only — no code changes. |
 | `test-validate` | bookend | sonnet | Re-runs the full test suite after all checks. Fixes any regressions. Always runs last. |
@@ -209,7 +213,7 @@ uv run checkloop --dir ~/my-project --plan thorough --effort medium
 | `observability` | super-exhaustive | opus | Checks that auth, payments, data mutations, external API calls, and background jobs have structured logs, metrics, and reach an alerting path. Adds what's missing using the project's existing observability stack. |
 | `schema-validation` | super-exhaustive | sonnet | Ensures every external boundary (HTTP handlers, webhooks, queue consumers, external API responses, env/config) parses through a schema (Zod/Pydantic/etc.), not a raw type assertion. Verifies webhook signature checks. |
 | `secret-leakage` | super-exhaustive | sonnet | Scans the repo and built output for API keys, tokens, private keys, connection strings with passwords, PII in logs, and server secrets bundled into client code. Flags commits that need rotation. |
-| `migration-safety` | on-demand | opus | Reviews database migrations for locking risk, concurrent-index creation, destructive-change staging, chunked backfills, rollback paths, and transaction-boundary correctness. Run with `--checks migration-safety` for projects with SQL/relational migrations; not in any default plan. |
+| `migration-safety` | on-demand | opus | Reviews persisted-schema changes for production safety. SQL: locking risk, concurrent-index creation, destructive-change staging, chunked backfills, rollback paths, transaction boundaries. Document/search stores (Elasticsearch/OpenSearch/Mongo): versioned-index + alias-swap instead of in-place mapping rewrites, an old-format→new-code upgrade test, chunked reindex backfills, and isolating an engine-version bump from logic changes. Run with `--checks migration-safety`; not in any default plan. |
 | `feature-flags` | super-exhaustive | sonnet | Finds ghost flags (referenced, not defined), orphan flags (defined, not referenced), fully-rolled-out flags with dormant branches, and conflicting flag gates. |
 | `fixture-drift` | super-exhaustive | sonnet | Finds test mocks and recorded fixtures that no longer match the real code or external APIs — silently-passing mocks, deep-chain patches, stale HTTP recordings, leaking mocks without teardown. |
 | `contributing-conformance` | super-exhaustive | fable | Reads the target project's own contributor rules **in full** (`CONTRIBUTING.md`, `CLAUDE.md`, `AGENTS.md`, …) and audits this run's diff against them — the project-specific rules the generic suite can't know, including the ones buried past the rule-injection size cap. Scoped to diff-relevant rules (ignores process/CI/merge-procedure guidance). Writes violations to `.checkloop-contributing-audit.md` when any are found; the post-run review prompt tells the adopting agent to evaluate and act on each. Advisory — no code changes. Self-skips when the project has no such files. |
@@ -342,7 +346,7 @@ uv run checkloop --cycles 5 --convergence-threshold 0.5
 --plan, -p PLAN        Plan name or path to a TOML plan file.
                        Pre-populated: basic, thorough, exhaustive (default: basic).
 --checks CHECK [...]   Manually select checks (overrides --plan)
---all-checks           Run all 27 checks (same as --plan exhaustive).
+--all-checks           Run all 31 checks (same as --plan exhaustive).
                        For the 35-check super-exhaustive plan, use
                        --plan super-exhaustive explicitly.
 --cycles, -c N         Repeat the full suite N times (default: 1)

@@ -1,6 +1,6 @@
 [tier]
 name = "thorough"
-description = "Basic plus docs, docs-accuracy, security, performance, error handling, type safety, derived-value consistency, cross-check coherence"
+description = "Basic plus docs, docs-accuracy, security, authorization/access-control, performance, error handling, type safety, derived-value consistency, cross-check coherence, and a suppressed-failures sweep"
 
 [[checks]]
 id = "test-fix"
@@ -51,6 +51,12 @@ idle_timeout = 900
 effort = "xhigh"
 
 [[checks]]
+id = "access-control"
+model = "opus"
+idle_timeout = 900
+effort = "xhigh"
+
+[[checks]]
 id = "perf"
 model = "opus"
 idle_timeout = 900
@@ -90,6 +96,12 @@ effort = "xhigh"
 id = "tests-for-diff"
 model = "sonnet"
 idle_timeout = 900
+effort = "medium"
+
+[[checks]]
+id = "suppressed-failures"
+model = "sonnet"
+idle_timeout = 600
 effort = "medium"
 
 [[checks]]

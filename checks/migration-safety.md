@@ -3,7 +3,7 @@ id: migration-safety
 label: "Database Migration Safety"
 ---
 
-Review database migrations (and any other schema/state mutations that run on deploy) for safety under production conditions: concurrent writes, large tables, partial failure, and rollback. Skip this check entirely if the project has no migrations directory.
+Review database migrations (and any other schema/state mutations that run on deploy) for safety under production conditions: concurrent writes, large tables, partial failure, and rollback. This covers relational/SQL migrations (sections 1–5 below) **and** schema evolution of document / search stores — Elasticsearch, OpenSearch, MongoDB, DynamoDB — and any on-disk/persisted format change (section 6). Skip this check entirely only if the project has no migrations and no persisted-schema changes in this run at all.
 
 1. **Locate migrations.** Common paths: `migrations/`, `db/migrate/`, `alembic/versions/`, `prisma/migrations/`, `supabase/migrations/`, `knex/migrations/`, `flyway/`, `db/schema.sql`. Also consider one-off "data fix" scripts in `scripts/` that mutate production state.
 
@@ -35,8 +35,19 @@ Review database migrations (and any other schema/state mutations that run on dep
 
 5. **Check data scripts.** One-off scripts in `scripts/` that mutate production data should be checked into the repo (not run from laptops), log what they did, be idempotent, and ideally run as a migration under the same framework as the schema changes.
 
+6. **Document / search-index and on-disk format changes.** These stores have no `ALTER TABLE`, so the failure modes differ but are just as destructive:
+
+   **Never mutate an index/collection in place when the mapping or document shape changes.** Reindexing over the live index, or changing a field's type/analyzer in place, destroys the only rollback path and can silently drop or misinterpret existing documents. Prefer expand-and-contract at the index level: create `<name>_v<N+1>` with the new mapping, backfill/reindex into it, verify, then swap a read alias over — so a bad rollout is a one-line alias revert, not a restore-from-snapshot. CLIs/tools that do this should default to the version-bump path and gate any in-place rewrite behind an explicit `--in-place`-style flag that only makes sense on a throwaway dev cluster.
+
+   **Require an old-format → new-code upgrade test.** The most dangerous doc-store bug is code that reads a *shape* no existing document has yet: a flat→nested field flip, a renamed field, a changed enum encoding. Tests that write *new*-format documents and read them back pass trivially and prove nothing — production data is in the *old* shape. For any change to how a persisted document is read, confirm there is a test that seeds a document in the **pre-change** on-disk shape, runs the new read/migration path, and asserts a sane result. If none exists, add one (or, if seeding the old shape needs a fixture the project lacks, flag it explicitly as a named missing piece). This is the same discipline as a SQL `down` migration: prove you can move an *existing* store forward, not just a fresh one.
+
+   **Backfills over a large index** have the same cost as a large SQL `UPDATE` — chunk them (scroll/`search_after` + bulk, or the store's managed reindex), don't rewrite every document in one unbounded pass.
+
+7. **Isolate an engine/version bump from code changes.** A change that bumps the datastore engine version (Elasticsearch 8→9, a Postgres major, a Mongo server version) regenerates goldens/snapshots because the engine's own output shifted. If that bump is bundled with logic changes in the same migration/PR, a *real* regression hides inside "expected upgrade drift" and gets rubber-stamped when the goldens are regenerated. Flag a version bump that is not isolated: it should land in its own change containing only the bump and the regenerated goldens, with logic changes in a separate one.
+
 **What to fix:**
 - Split multi-step destructive changes into separate migrations.
+- For document/search stores: convert in-place mapping rewrites to versioned-index + alias-swap; add the old-format upgrade test; chunk large reindex backfills; split an unisolated engine-version bump out from logic changes.
 - Add `CONCURRENTLY` where the project's database supports it.
 - Chunk large backfills.
 - Add explicit `down` migrations where missing.
