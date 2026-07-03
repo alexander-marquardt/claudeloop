@@ -1,6 +1,6 @@
 [tier]
 name = "exhaustive"
-description = "All checks — includes edge cases, complexity, deps, logging, concurrency, a11y, API design, docs-accuracy, cross-check coherence, and AI slop cleanup"
+description = "All checks — includes edge cases, complexity, deps, logging, concurrency, access-control, state-locality & cache coherence, a11y, frontend data-flow, API design, docs-accuracy, cross-check coherence, and AI slop cleanup"
 
 [[checks]]
 id = "test-fix"
@@ -40,6 +40,12 @@ effort = "medium"
 
 [[checks]]
 id = "security"
+model = "opus"
+idle_timeout = 900
+effort = "xhigh"
+
+[[checks]]
+id = "access-control"
 model = "opus"
 idle_timeout = 900
 effort = "xhigh"
@@ -117,10 +123,22 @@ idle_timeout = 900
 effort = "high"
 
 [[checks]]
+id = "state-locality"
+model = "opus"
+idle_timeout = 900
+effort = "high"
+
+[[checks]]
 id = "accessibility"
 model = "sonnet"
 idle_timeout = 600
 effort = "medium"
+
+[[checks]]
+id = "frontend-data-flow"
+model = "opus"
+idle_timeout = 900
+effort = "high"
 
 [[checks]]
 id = "api-design"
@@ -150,6 +168,12 @@ effort = "xhigh"
 id = "tests-for-diff"
 model = "sonnet"
 idle_timeout = 900
+effort = "medium"
+
+[[checks]]
+id = "suppressed-failures"
+model = "sonnet"
+idle_timeout = 600
 effort = "medium"
 
 [[checks]]
